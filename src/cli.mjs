@@ -47,7 +47,7 @@ console.log(`\nSCT AI 工具环境自查 v${VERSION}\n`);
 console.log("只读检查；不读取账号凭据或对话，不修改系统设置。");
 if (!args.includes("--offline"))
   console.log(
-    "将连接 SCT、Cloudflare、Anthropic 与 OpenAI 的公开端点；各端点会看到连接 IP。\n",
+    "将连接 SCT、Cloudflare、Anthropic、OpenAI、ipapi.is 与 tls.peet.ws 的公开端点；各端点会看到连接 IP。\n",
   );
 try {
   const report = await collect({

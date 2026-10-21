@@ -1,3 +1,9 @@
+import {
+  proxyDiagnostics,
+  gatewayDiagnostic,
+  fingerprintCheck,
+  metadataCheck,
+} from "./diagnostics.mjs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { access, readFile } from "node:fs/promises";
@@ -9,7 +15,7 @@ import { createSocket } from "node:dgram";
 import { randomBytes } from "node:crypto";
 import https from "node:https";
 
-export const VERSION = "1.0.0";
+export const VERSION = "1.1.0";
 const execute = promisify(execFile);
 const proxyKeys = [
   "http_proxy",
@@ -29,6 +35,9 @@ const networkKeys = [
   "SSL_CERT_FILE",
   "CURL_CA_BUNDLE",
   "NODE_TLS_REJECT_UNAUTHORIZED",
+  "CLAUDE_CODE_CERT_STORE",
+  "CLAUDE_CODE_CLIENT_CERT",
+  "CLAUDE_CODE_CLIENT_KEY",
   "DISABLE_TELEMETRY",
   "DISABLE_ERROR_REPORTING",
   "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
@@ -86,14 +95,15 @@ export function classifyHTTP(status, curlCode = 0, tlsResult = 0) {
       35: "TLS 握手失败",
       60: "证书校验失败",
       97: "代理握手失败",
+      56: "接收响应时连接中断",
     };
     return {
-      status: curlCode === 60 || curlCode === 35 ? "review" : "unknown",
+      status: curlCode === -1 ? "unknown" : "error",
       summary: reasons[curlCode] || `连接探测未完成（curl ${curlCode}）`,
       action:
         curlCode === 60
           ? "核对系统时间、企业证书和可信 CA；不要关闭证书校验。"
-          : "检查网络、代理监听与目标服务状态，再复测。失败不代表账户被禁用。",
+          : "检查网络、代理监听与目标服务状态，再复测。",
     };
   }
   if (tlsResult)
@@ -350,6 +360,7 @@ async function localProxyListeners(env) {
 
 async function claudeSettings() {
   const evidence = [];
+  let issueCount = 0;
   for (const filename of ["settings.json", "settings.local.json"]) {
     try {
       const content = await readFile(
@@ -362,6 +373,17 @@ async function claudeSettings() {
       }
       const parsed = JSON.parse(content);
       const selected = selectedEnvironment(parsed.env || {});
+      const diagnosis = proxyDiagnostics(parsed.env || {});
+      if (diagnosis.status === "review") {
+        issueCount += diagnosis.evidence.length;
+        evidence.push(
+          ...diagnosis.evidence.map((line) => `${filename}：${line}`),
+        );
+      }
+      if (parsed.env?.NODE_TLS_REJECT_UNAUTHORIZED === "0") {
+        issueCount++;
+        evidence.push(`${filename}：关闭了 Node 证书校验。`);
+      }
       evidence.push(`${filename}：存在`);
       for (const [key, value] of Object.entries(selected))
         evidence.push(`${filename} / ${key}：${value}`);
@@ -370,7 +392,7 @@ async function claudeSettings() {
         evidence.push(`${filename}：未能读取有效 JSON`);
     }
   }
-  return evidence;
+  return { evidence, issueCount };
 }
 
 function udpExit() {
@@ -491,6 +513,8 @@ export async function collect({ offline = false, onCheck = () => {} } = {}) {
     Object.entries(selected).map(([key, value]) => `${key}：${value}`),
     "未设置代理变量也可能正常使用 VPN／TUN。核对是否符合你的实际网络方案，不要为了“全绿”叠加代理。",
   );
+  add(proxyDiagnostics(process.env));
+  add(gatewayDiagnostic(process.env));
   const settings = await systemSettings();
   check(
     "system-proxy",
@@ -518,11 +542,11 @@ export async function collect({ offline = false, onCheck = () => {} } = {}) {
   check(
     "client-config",
     "Claude Code 用户网络配置",
-    "info",
-    cliConfig.length
+    cliConfig.issueCount ? "review" : "info",
+    cliConfig.evidence.length
       ? "已检查用户设置中的网络字段。"
       : "没有读取到 Claude Code 用户设置。",
-    cliConfig,
+    cliConfig.evidence,
     "只提取白名单中的网络字段，不读取凭据文件或对话。项目设置、桌面进程和其他客户端仍可能覆盖这些值。",
   );
   const tlsDisabled = process.env.NODE_TLS_REJECT_UNAUTHORIZED === "0";
@@ -534,6 +558,8 @@ export async function collect({ offline = false, onCheck = () => {} } = {}) {
     "NODE_EXTRA_CA_CERTS",
     "SSL_CERT_FILE",
     "CURL_CA_BUNDLE",
+    "CLAUDE_CODE_CLIENT_CERT",
+    "CLAUDE_CODE_CLIENT_KEY",
   ]) {
     if (!process.env[key]) continue;
     try {
@@ -583,14 +609,20 @@ export async function collect({ offline = false, onCheck = () => {} } = {}) {
       "能连接端口不代表代理上游正常；连接失败时检查代理是否运行、端口是否填对。不会扫描其他本地端口。",
     );
     const resolver = new Resolver({ timeout: 1800, tries: 1 });
-    const domains = ["api.anthropic.com", "api.openai.com", "sctcamp.com"];
+    const domains = [
+      "claude.ai",
+      "api.anthropic.com",
+      "platform.claude.com",
+      "downloads.claude.ai",
+    ];
+    let dnsSuccess = 0;
     const dnsEvidence = [...settings.dns.map((ip) => `系统 DNS：${ip}`)];
     await Promise.all(
       domains.map(async (domain) => {
         try {
-          dnsEvidence.push(
-            `${domain} A：${(await resolver.resolve4(domain)).join("、")}`,
-          );
+          const addresses = await resolver.resolve4(domain);
+          if (addresses.length) dnsSuccess++;
+          dnsEvidence.push(`${domain} A：${addresses.join("、")}`);
         } catch {
           dnsEvidence.push(`${domain} A：本次未解析成功`);
         }
@@ -598,9 +630,9 @@ export async function collect({ offline = false, onCheck = () => {} } = {}) {
     );
     check(
       "dns",
-      "DNS 配置与解析",
-      "info",
-      "已记录 DNS 配置和本次 A 记录查询结果。",
+      "Claude 域名 DNS 解析",
+      dnsSuccess === domains.length ? "ok" : dnsSuccess ? "review" : "error",
+      `${dnsSuccess}/${domains.length} 个 Claude 域名解析成功。`,
       dnsEvidence,
       "198.18.0.0/15 可能是代理的 fake-IP，不单独判错。配置和解析结果不能证明 DNS 是否泄漏；本工具没有权威 DNS 侧观测。",
     );
@@ -638,6 +670,21 @@ export async function collect({ offline = false, onCheck = () => {} } = {}) {
         "openai",
         "OpenAI API",
         "https://api.openai.com/v1/models",
+        false,
+        false,
+      ],
+      [
+        "claude-login",
+        "Claude 登录与授权",
+        "https://platform.claude.com/",
+        false,
+        false,
+      ],
+      ["claude-signin", "Claude 登录入口", "https://claude.com/", false, false],
+      [
+        "claude-download",
+        "Claude 安装与更新",
+        "https://downloads.claude.ai/claude-code-releases/latest",
         false,
         false,
       ],
@@ -724,6 +771,96 @@ export async function collect({ offline = false, onCheck = () => {} } = {}) {
             );
           }),
       );
+    // 外部信息只存白名单字段，不写入原始网络包、会话随机数或供应商响应全文。
+    const supplemental = [
+      [
+        "transport-fingerprint",
+        "本地 curl 的 TCP / TLS 网络指纹",
+        "https://tls.peet.ws/api/all",
+      ],
+      [
+        "claude-status",
+        "Claude 官方服务状态",
+        "https://status.claude.com/api/v2/summary.json",
+      ],
+    ];
+    const ip = exits.find((e) => e.source === "ipv4")?.ip;
+    if (ip)
+      supplemental.push([
+        "ip-profile",
+        "出口 IP、ASN 与运营商",
+        `https://api.ipapi.is/?q=${encodeURIComponent(ip)}`,
+      ]);
+    await Promise.all(
+      supplemental.map(async ([id, title, url]) => {
+        try {
+          const result = await curl(url, { body: true });
+          if (result.code || result.http !== 200)
+            throw new Error(`HTTP ${result.http} / curl ${result.code}`);
+          const data = JSON.parse(result.body);
+          if (id === "transport-fingerprint") add(fingerprintCheck(data));
+          else if (id === "ip-profile") add(metadataCheck(data, ip));
+          else {
+            const components = (data.components || []).filter((c) =>
+              /claude.ai|Claude API|Claude Code|Claude Console/.test(
+                c.name || "",
+              ),
+            );
+            if (!components.length) throw new Error("官方状态格式无法识别");
+            const bad =
+              components.some((c) => c.status !== "operational") ||
+              (data.incidents || []).length > 0;
+            check(
+              id,
+              title,
+              bad ? "review" : "ok",
+              bad
+                ? "官方报告存在服务异常或事故。"
+                : "官方报告 Claude 服务运行正常。",
+              components.map((c) => `${c.name}：${c.status}`),
+              "访问 status.claude.com 查看最新进展；与本机结果对照。",
+            );
+          }
+        } catch (error) {
+          check(
+            id,
+            title,
+            "unknown",
+            "本次未取得有效结果。",
+            [String(error.message).slice(0, 180)],
+            "没有记为正常；检查端点连接或供应商调用额度后复测。",
+          );
+        }
+      }),
+    );
+    if (!ip)
+      check(
+        "ip-profile",
+        "出口 IP、ASN 与运营商",
+        "unknown",
+        "缺少有效的 IPv4 出口。",
+        [],
+        "先处理 IPv4 检测失败。",
+      );
+    const series = [];
+    for (let i = 0; i < 3; i++)
+      series.push(await curl("https://api.anthropic.com/v1/models"));
+    const successes = series.filter(
+      (r) => !r.code && ((r.http >= 200 && r.http < 400) || r.http === 401),
+    );
+    check(
+      "claude-stability",
+      "Claude API 连续连接",
+      successes.length === 3 ? "ok" : successes.length ? "review" : "error",
+      `${successes.length}/3 次取得正常或需鉴权的响应。`,
+      series.map(
+        (r, i) =>
+          `第 ${i + 1} 次：HTTP ${r.http || "无响应"} / curl ${r.code} / ${r.ms} ms`,
+      ),
+      successes.length === 3
+        ? "本轮连续连接稳定。"
+        : "查看每次 HTTP 状态与 curl 错误，检查线路稳定性、代理或服务拒绝原因。",
+    );
     const [stunIP, tls] = await Promise.all([udpExit(), nodeTLS()]);
     if (stunIP)
       exits.push({ label: "本地 UDP / STUN", ip: stunIP, source: "stun" });
@@ -738,7 +875,7 @@ export async function collect({ offline = false, onCheck = () => {} } = {}) {
     check(
       "node-tls",
       "Node.js HTTPS 与证书校验",
-      tls.error ? "review" : "ok",
+      tls.error ? "error" : classifyHTTP(tls.code).status,
       tls.error
         ? "Node.js 网络栈未完成 HTTPS 请求。"
         : `Node.js 已收到 HTTP ${tls.code} 响应。`,
