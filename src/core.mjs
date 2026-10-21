@@ -543,9 +543,11 @@ export async function collect({ offline = false, onCheck = () => {} } = {}) {
     "client-config",
     "Claude Code 用户网络配置",
     cliConfig.issueCount ? "review" : "info",
-    cliConfig.evidence.length
-      ? "已检查用户设置中的网络字段。"
-      : "没有读取到 Claude Code 用户设置。",
+    cliConfig.issueCount
+      ? `发现 ${cliConfig.issueCount} 项用户网络配置问题。`
+      : cliConfig.evidence.length
+        ? "已检查用户设置中的网络字段。"
+        : "没有读取到 Claude Code 用户设置。",
     cliConfig.evidence,
     "只提取白名单中的网络字段，不读取凭据文件或对话。项目设置、桌面进程和其他客户端仍可能覆盖这些值。",
   );
@@ -888,14 +890,6 @@ export async function collect({ offline = false, onCheck = () => {} } = {}) {
       "此探测不自动使用代理环境变量，仍可能经过 VPN／TUN；它与 curl 和原生 Claude Code 的网络行为可能不同，不能等同于客户端实际请求。",
     );
   }
-  check(
-    "limits",
-    "本工具无法检测的项目",
-    "unknown",
-    "平台内部风控、账户封禁记录、支付风险与实际所在地区无法自动确认。",
-    [],
-    "依据官方服务支持范围与条款使用产品。代理出口国家不能替代实际所在地，也不能保证账户安全。",
-  );
   return {
     schemaVersion: 1,
     product: "sct-network-check",
