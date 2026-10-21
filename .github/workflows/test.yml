@@ -4,6 +4,7 @@ permissions:
   contents: read
 jobs:
   local-detector:
+    timeout-minutes: 8
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
@@ -23,3 +24,26 @@ jobs:
       - name: Unix launcher
         if: runner.os != 'Windows'
         run: bash start.sh --offline --no-open --output reports/launcher
+      - name: Windows CMD launcher
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: '& cmd.exe /c ''.\开始检测.cmd --offline --no-open --output reports/cmd'''
+  portable-runtime:
+    timeout-minutes: 8
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unix official portable runtime
+        if: runner.os != 'Windows'
+        env:
+          SCT_NETWORK_FORCE_RUNTIME: '1'
+        run: bash start.sh --offline --no-open --output reports/portable
+      - name: Windows official portable runtime
+        if: runner.os == 'Windows'
+        shell: powershell
+        env:
+          SCT_NETWORK_FORCE_RUNTIME: '1'
+        run: ./start.ps1 --offline --no-open --output reports/portable

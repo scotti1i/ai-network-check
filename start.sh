@@ -2,7 +2,7 @@
 set -eu
 root_dir="$(cd -- "$(dirname -- "$0")" && pwd)"
 node_bin=""
-if command -v node >/dev/null 2>&1 && node -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 20 ? 0 : 1)' >/dev/null 2>&1; then
+if [ "${SCT_NETWORK_FORCE_RUNTIME:-0}" != 1 ] && command -v node >/dev/null 2>&1 && node -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 20 ? 0 : 1)' >/dev/null 2>&1; then
   node_bin="$(command -v node)"
 else
   printf '\n未找到 Node.js 20+，下载官方便携运行时（只放在用户目录，不改 PATH）。\n'

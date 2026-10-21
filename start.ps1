@@ -1,7 +1,7 @@
 ﻿$ErrorActionPreference = 'Stop'
 $NodeBin = $null
 $NodeCommand = Get-Command node -ErrorAction SilentlyContinue
-if ($NodeCommand) {
+if ($NodeCommand -and $env:SCT_NETWORK_FORCE_RUNTIME -ne '1') {
   $NodeMajor = & $NodeCommand.Source -p 'process.versions.node.split(String.fromCharCode(46))[0]'
   if ([int]$NodeMajor -ge 20) { $NodeBin = $NodeCommand.Source }
 }
