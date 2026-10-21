@@ -27,7 +27,7 @@ jobs:
       - name: Windows CMD launcher
         if: runner.os == 'Windows'
         shell: powershell
-        run: '& cmd.exe /c ''.\开始检测.cmd --offline --no-open --output reports/cmd'''
+        run: '& cmd.exe /c ''.\start.cmd --offline --no-open --output reports/cmd'''
   portable-runtime:
     timeout-minutes: 8
     strategy:

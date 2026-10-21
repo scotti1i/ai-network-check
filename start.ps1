@@ -1,4 +1,5 @@
 ﻿$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
 $NodeBin = $null
 $NodeCommand = Get-Command node -ErrorAction SilentlyContinue
 if ($NodeCommand -and $env:SCT_NETWORK_FORCE_RUNTIME -ne '1') {
@@ -17,13 +18,15 @@ if (-not $NodeBin) {
     $TempDir = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
     New-Item -ItemType Directory -Path $TempDir | Out-Null
     try {
-      $ZipPath = Join-Path $TempDir 'runtime.zip'
-      Invoke-WebRequest -UseBasicParsing -Uri "https://nodejs.org/dist/$RuntimeVersion/$RuntimeName.zip" -OutFile $ZipPath
-      $Sums = (Invoke-WebRequest -UseBasicParsing -Uri "https://nodejs.org/dist/$RuntimeVersion/SHASUMS256.txt").Content
-      $Expected = (($Sums -split "`n" | Where-Object { $_.Trim().EndsWith(" $RuntimeName.zip") }) -split '\s+')[0]
-      $Actual = (Get-FileHash -Algorithm SHA256 $ZipPath).Hash
+      $RuntimeFile = Join-Path $TempDir 'node.exe'
+      $RuntimeRemote = "win-$RuntimeArch/node.exe"
+      Invoke-WebRequest -UseBasicParsing -TimeoutSec 180 -Uri "https://nodejs.org/dist/$RuntimeVersion/$RuntimeRemote" -OutFile $RuntimeFile
+      $Sums = (Invoke-WebRequest -UseBasicParsing -TimeoutSec 30 -Uri "https://nodejs.org/dist/$RuntimeVersion/SHASUMS256.txt").Content
+      $Expected = (($Sums -split "`n" | Where-Object { $_.Trim().EndsWith(" $RuntimeRemote") }) -split '\s+')[0]
+      $Actual = (Get-FileHash -Algorithm SHA256 $RuntimeFile).Hash
       if (-not $Expected -or $Actual.ToLowerInvariant() -ne $Expected.ToLowerInvariant()) { throw '运行时校验失败，停止执行。' }
-      Expand-Archive -LiteralPath $ZipPath -DestinationPath $CacheDir -Force
+      New-Item -ItemType Directory -Force -Path (Split-Path $NodeBin) | Out-Null
+      Move-Item -LiteralPath $RuntimeFile -Destination $NodeBin -Force
     } finally { Remove-Item -LiteralPath $TempDir -Recurse -Force }
   }
 }
