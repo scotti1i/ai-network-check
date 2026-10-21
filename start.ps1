@@ -2,7 +2,7 @@
 $NodeBin = $null
 $NodeCommand = Get-Command node -ErrorAction SilentlyContinue
 if ($NodeCommand) {
-  $NodeMajor = & $NodeCommand.Source -p 'process.versions.node.split(".")[0]'
+  $NodeMajor = & $NodeCommand.Source -p 'process.versions.node.split(String.fromCharCode(46))[0]'
   if ([int]$NodeMajor -ge 20) { $NodeBin = $NodeCommand.Source }
 }
 if (-not $NodeBin) {
