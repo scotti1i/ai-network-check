@@ -1,0 +1,5 @@
+reports/
+.runtime/
+dist/
+*.log
+.DS_Store

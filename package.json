@@ -1,0 +1,11 @@
+{
+  "name": "@sctcamp/ai-network-check",
+  "version": "1.0.0",
+  "private": true,
+  "description": "只读的 AI 工具网络与环境自查，配合 sctcamp.com/tools/network 使用。",
+  "type": "module",
+  "license": "MIT",
+  "engines": { "node": ">=20" },
+  "scripts": { "start": "node src/cli.mjs", "test": "node --test" },
+  "repository": "https://github.com/scotti1i/ai-network-check"
+}
